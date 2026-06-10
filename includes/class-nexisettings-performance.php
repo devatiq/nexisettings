@@ -79,7 +79,7 @@ class NexiSettings_Performance {
 			return $urls;
 		}
 
-		$emoji_svg_url = apply_filters( 'emoji_svg_url', 'https://s.w.org/images/core/emoji/15.0.3/svg/' );
+		$emoji_svg_url = 'https://s.w.org/images/core/emoji/15.0.3/svg/';
 
 		return array_diff( $urls, array( $emoji_svg_url ) );
 	}
