@@ -194,7 +194,7 @@ class NexiSettings_Admin {
 
 		$this->clear_settings_errors();
 		$options = $this->sanitize_options( $input );
-		update_option( NEXISETTINGS_OPTION, $options );
+		$this->update_options_without_resanitizing( $options );
 
 		$errors     = get_settings_errors( NEXISETTINGS_OPTION );
 		$has_errors = $this->settings_errors_have_errors( $errors );
@@ -212,6 +212,22 @@ class NexiSettings_Admin {
 				'logoUrl'          => $this->get_logo_preview_url( $options ),
 			)
 		);
+	}
+
+	/**
+	 * Persist already-sanitized AJAX options without running the Settings API sanitizer again.
+	 *
+	 * The registered sanitize callback expects an active_tab marker. AJAX saves sanitize first,
+	 * then store the final option array, so a second sanitize pass would otherwise restore
+	 * the previous database value.
+	 *
+	 * @param array $options Sanitized plugin options.
+	 * @return void
+	 */
+	private function update_options_without_resanitizing( $options ) {
+		remove_filter( 'sanitize_option_' . NEXISETTINGS_OPTION, array( $this, 'sanitize_options' ), 10 );
+		update_option( NEXISETTINGS_OPTION, $options );
+		add_filter( 'sanitize_option_' . NEXISETTINGS_OPTION, array( $this, 'sanitize_options' ), 10, 1 );
 	}
 
 	/**
@@ -313,7 +329,7 @@ class NexiSettings_Admin {
 		<div class="wrap nexisettings-wrap">
 			<div class="nexisettings-hero">
 				<div>
-					<p class="nexisettings-eyebrow"><?php esc_html_e( 'Nexiby toolkit', 'nexisettings' ); ?></p>
+					<p class="nexisettings-eyebrow"><?php esc_html_e( 'DASHBOARD TOOLKIT', 'nexisettings' ); ?></p>
 					<h1><?php esc_html_e( 'NexiSettings', 'nexisettings' ); ?></h1>
 					<p><?php esc_html_e( 'Secure and customize WordPress login, redirects, performance, and admin branding from one clean dashboard.', 'nexisettings' ); ?></p>
 				</div>
