@@ -14,10 +14,18 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 class NexiSettings_Redirects {
 	/**
+	 * Has a redirect already been processed in this request.
+	 *
+	 * @var bool
+	 */
+	private $did_redirect = false;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
-		add_action( 'template_redirect', array( $this, 'maybe_redirect' ), 1 );
+		add_action( 'parse_request', array( $this, 'maybe_redirect' ), 1 );
+		add_action( 'template_redirect', array( $this, 'maybe_redirect' ), 0 );
 	}
 
 	/**
@@ -26,7 +34,7 @@ class NexiSettings_Redirects {
 	 * @return void
 	 */
 	public function maybe_redirect() {
-		if ( NexiSettings::is_protected_request_context() ) {
+		if ( $this->did_redirect || NexiSettings::is_protected_request_context() || is_user_logged_in() && is_admin() ) {
 			return;
 		}
 
@@ -51,7 +59,14 @@ class NexiSettings_Redirects {
 			}
 
 			$status = isset( $redirect['type'] ) && 302 === absint( $redirect['type'] ) ? 302 : 301;
-			wp_redirect( esc_url_raw( $redirect['destination'] ), $status ); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
+			$destination = $this->prepare_destination_url( $redirect['destination'] );
+
+			if ( '' === $destination ) {
+				continue;
+			}
+
+			$this->did_redirect = true;
+			wp_redirect( $destination, $status ); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
 			exit;
 		}
 	}
@@ -159,14 +174,18 @@ class NexiSettings_Redirects {
 	 * @return array
 	 */
 	private function get_current_request_parts() {
-		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '/';
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '/';
 		$host        = isset( $_SERVER['HTTP_HOST'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) : wp_parse_url( home_url(), PHP_URL_HOST );
 		$scheme      = is_ssl() ? 'https' : 'http';
 		$full        = $scheme . '://' . $host . $request_uri;
+		$home_full   = home_url( $request_uri );
+		$path        = wp_parse_url( $request_uri, PHP_URL_PATH );
 
 		return array(
-			'full'     => self::normalize_url_for_comparison( $full ),
-			'relative' => self::normalize_url_for_comparison( $request_uri ),
+			'full'            => self::normalize_url_for_comparison( $full ),
+			'home_full'       => self::normalize_url_for_comparison( $home_full ),
+			'relative'        => self::normalize_url_for_comparison( $request_uri ),
+			'relative_no_qs'  => self::normalize_url_for_comparison( is_string( $path ) ? $path : '/' ),
 		);
 	}
 
@@ -179,12 +198,16 @@ class NexiSettings_Redirects {
 	 */
 	private function source_matches_current_request( $source, $current ) {
 		$normalized_source = self::normalize_url_for_comparison( $source );
+		$source_path       = self::normalize_url_for_comparison( $this->get_path_and_query_from_url( $source ) );
 
 		if ( 0 === strpos( $source, '/' ) ) {
-			return $normalized_source === $current['relative'];
+			return $normalized_source === $current['relative'] || $normalized_source === $current['relative_no_qs'];
 		}
 
-		return $normalized_source === $current['full'];
+		return $normalized_source === $current['full']
+			|| $normalized_source === $current['home_full']
+			|| $source_path === $current['relative']
+			|| $source_path === $current['relative_no_qs'];
 	}
 
 	/**
@@ -196,8 +219,47 @@ class NexiSettings_Redirects {
 	 */
 	private function would_loop( $destination, $current ) {
 		$normalized_destination = self::normalize_url_for_comparison( $destination );
+		$destination_path       = self::normalize_url_for_comparison( $this->get_path_and_query_from_url( $destination ) );
 
-		return $normalized_destination === $current['relative'] || $normalized_destination === $current['full'];
+		return $normalized_destination === $current['relative']
+			|| $normalized_destination === $current['relative_no_qs']
+			|| $normalized_destination === $current['full']
+			|| $normalized_destination === $current['home_full']
+			|| $destination_path === $current['relative']
+			|| $destination_path === $current['relative_no_qs'];
+	}
+
+	/**
+	 * Prepare a redirect destination for wp_redirect().
+	 *
+	 * @param string $destination Redirect destination.
+	 * @return string
+	 */
+	private function prepare_destination_url( $destination ) {
+		if ( 0 === strpos( $destination, '/' ) ) {
+			return esc_url_raw( home_url( $destination ) );
+		}
+
+		return esc_url_raw( $destination );
+	}
+
+	/**
+	 * Get path and query from a relative or absolute URL.
+	 *
+	 * @param string $url URL.
+	 * @return string
+	 */
+	private function get_path_and_query_from_url( $url ) {
+		$parts = wp_parse_url( $url );
+
+		if ( ! is_array( $parts ) ) {
+			return '';
+		}
+
+		$path  = isset( $parts['path'] ) ? $parts['path'] : '/';
+		$query = isset( $parts['query'] ) && '' !== $parts['query'] ? '?' . $parts['query'] : '';
+
+		return $path . $query;
 	}
 
 	/**

@@ -67,21 +67,11 @@ final class NexiSettings {
 	public function run() {
 		$this->load_dependencies();
 
-		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'init', array( $this, 'bootstrap_features' ), 0 );
 
 		if ( is_admin() ) {
 			new NexiSettings_Admin();
 		}
-	}
-
-	/**
-	 * Load translations.
-	 *
-	 * @return void
-	 */
-	public function load_textdomain() {
-		load_plugin_textdomain( 'nexisettings', false, dirname( NEXISETTINGS_BASENAME ) . '/languages' );
 	}
 
 	/**
@@ -124,9 +114,14 @@ final class NexiSettings {
 			'enable_custom_login'          => 0,
 			'custom_login_slug'           => '',
 			'login_block_action'          => '404',
+			'login_block_custom_url'      => '',
 			'login_logo_id'               => 0,
 			'login_logo_url'              => '',
 			'login_logo_text'             => '',
+			'login_background_color'      => '',
+			'login_text_color'            => '',
+			'login_link_color'            => '',
+			'login_logo_text_size'        => 18,
 			'disable_xmlrpc'              => 0,
 			'disable_user_enumeration'    => 0,
 			'hide_wp_version'             => 0,

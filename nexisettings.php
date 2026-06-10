@@ -1,11 +1,13 @@
 <?php
 /**
- * Plugin Name: NexiSettings
+ * Plugin Name: NexiSettings – Login, Redirect & Admin Toolkit
  * Plugin URI: https://nexiby.com/
- * Description: A WordPress login, redirect, security, performance, and admin customization toolkit.
+ * Description: Secure and customize WordPress with custom login URLs, redirect management, security enhancements, performance tweaks, and admin branding tools.
  * Version: 1.0.0
  * Author: Nexiby LLC
  * Author URI: https://nexiby.com/
+ * License: GPLv2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: nexisettings
  * Domain Path: /languages
  * Requires at least: 6.0

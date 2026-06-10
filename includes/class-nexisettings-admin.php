@@ -28,6 +28,8 @@ class NexiSettings_Admin {
 		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 		add_action( 'admin_post_nexisettings_save_redirects', array( $this, 'save_redirects' ) );
+		add_action( 'wp_ajax_nexisettings_save_options', array( $this, 'ajax_save_options' ) );
+		add_action( 'wp_ajax_nexisettings_save_redirects', array( $this, 'ajax_save_redirects' ) );
 		add_filter( 'plugin_action_links_' . NEXISETTINGS_BASENAME, array( $this, 'add_settings_link' ) );
 	}
 
@@ -43,7 +45,7 @@ class NexiSettings_Admin {
 			'manage_options',
 			self::MENU_SLUG,
 			array( $this, 'render_page' ),
-			'dashicons-shield-alt',
+			'dashicons-shield',
 			58
 		);
 	}
@@ -94,9 +96,14 @@ class NexiSettings_Admin {
 			'nexisettings-admin',
 			'nexiSettingsAdmin',
 			array(
-				'chooseLogo' => esc_html__( 'Choose login logo', 'nexisettings' ),
-				'useLogo'    => esc_html__( 'Use this logo', 'nexisettings' ),
-				'noLogo'     => esc_html__( 'No logo selected', 'nexisettings' ),
+				'ajaxUrl'     => admin_url( 'admin-ajax.php' ),
+				'nonce'       => wp_create_nonce( 'nexisettings_ajax_save' ),
+				'chooseLogo'  => esc_html__( 'Choose login logo', 'nexisettings' ),
+				'useLogo'     => esc_html__( 'Use this logo', 'nexisettings' ),
+				'noLogo'      => esc_html__( 'No logo selected', 'nexisettings' ),
+				'saving'      => esc_html__( 'Saving...', 'nexisettings' ),
+				'saveFailed'  => esc_html__( 'Settings could not be saved. Please refresh and try again.', 'nexisettings' ),
+				'ajaxError'   => esc_html__( 'A network error prevented saving. Please try again.', 'nexisettings' ),
 			)
 		);
 	}
@@ -157,6 +164,73 @@ class NexiSettings_Admin {
 	}
 
 	/**
+	 * Save primary plugin options through AJAX.
+	 *
+	 * @return void
+	 */
+	public function ajax_save_options() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error(
+				array(
+					'notices' => $this->render_notice_html( esc_html__( 'You do not have permission to manage NexiSettings.', 'nexisettings' ), 'error' ),
+				),
+				403
+			);
+		}
+
+		check_ajax_referer( 'nexisettings_ajax_save', 'nonce' );
+
+		$input = isset( $_POST[ NEXISETTINGS_OPTION ] ) && is_array( $_POST[ NEXISETTINGS_OPTION ] ) ? wp_unslash( $_POST[ NEXISETTINGS_OPTION ] ) : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$tab   = isset( $input['active_tab'] ) ? sanitize_key( wp_unslash( $input['active_tab'] ) ) : '';
+
+		if ( '' === $tab ) {
+			wp_send_json_error(
+				array(
+					'notices' => $this->render_notice_html( esc_html__( 'Settings could not be saved because the active tab was missing.', 'nexisettings' ), 'error' ),
+				),
+				400
+			);
+		}
+
+		$this->clear_settings_errors();
+		$options = $this->sanitize_options( $input );
+		$this->update_options_without_resanitizing( $options );
+
+		$errors     = get_settings_errors( NEXISETTINGS_OPTION );
+		$has_errors = $this->settings_errors_have_errors( $errors );
+		$notices    = $this->render_settings_errors_html( $errors );
+
+		if ( ! $has_errors ) {
+			$notices .= $this->render_notice_html( $this->get_success_message_for_tab( $tab, $options ), 'success' );
+		}
+
+		wp_send_json_success(
+			array(
+				'notices'          => $notices,
+				'options'          => $options,
+				'currentLoginHtml' => $this->get_current_login_notice_html( $options ),
+				'logoUrl'          => $this->get_logo_preview_url( $options ),
+			)
+		);
+	}
+
+	/**
+	 * Persist already-sanitized AJAX options without running the Settings API sanitizer again.
+	 *
+	 * The registered sanitize callback expects an active_tab marker. AJAX saves sanitize first,
+	 * then store the final option array, so a second sanitize pass would otherwise restore
+	 * the previous database value.
+	 *
+	 * @param array $options Sanitized plugin options.
+	 * @return void
+	 */
+	private function update_options_without_resanitizing( $options ) {
+		remove_filter( 'sanitize_option_' . NEXISETTINGS_OPTION, array( $this, 'sanitize_options' ), 10 );
+		update_option( NEXISETTINGS_OPTION, $options );
+		add_filter( 'sanitize_option_' . NEXISETTINGS_OPTION, array( $this, 'sanitize_options' ), 10, 1 );
+	}
+
+	/**
 	 * Save redirects from the custom redirects form.
 	 *
 	 * @return void
@@ -168,7 +242,47 @@ class NexiSettings_Admin {
 
 		check_admin_referer( 'nexisettings_save_redirects' );
 
-		$rows      = isset( $_POST['nexisettings_redirects'] ) && is_array( $_POST['nexisettings_redirects'] ) ? wp_unslash( $_POST['nexisettings_redirects'] ) : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$result = $this->process_redirect_save();
+
+		$this->set_admin_notice( $result['message'], $result['type'] );
+
+		wp_safe_redirect( add_query_arg( array( 'page' => self::MENU_SLUG, 'tab' => 'redirects' ), admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	/**
+	 * Save redirects through AJAX.
+	 *
+	 * @return void
+	 */
+	public function ajax_save_redirects() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error(
+				array(
+					'notices' => $this->render_notice_html( esc_html__( 'You do not have permission to manage NexiSettings.', 'nexisettings' ), 'error' ),
+				),
+				403
+			);
+		}
+
+		check_ajax_referer( 'nexisettings_ajax_save', 'nonce' );
+
+		$result = $this->process_redirect_save();
+
+		wp_send_json_success(
+			array(
+				'notices' => $this->render_notice_html( $result['message'], $result['type'] ),
+			)
+		);
+	}
+
+	/**
+	 * Process submitted redirect rows.
+	 *
+	 * @return array
+	 */
+	private function process_redirect_save() {
+		$rows      = isset( $_POST['nexisettings_redirects'] ) && is_array( $_POST['nexisettings_redirects'] ) ? wp_unslash( $_POST['nexisettings_redirects'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$redirects = NexiSettings_Redirects::sanitize_redirect_rows( $rows );
 		$submitted = $this->count_submitted_redirect_rows( $rows );
 		$skipped   = max( 0, $submitted - count( $redirects ) );
@@ -176,28 +290,25 @@ class NexiSettings_Admin {
 		update_option( NEXISETTINGS_REDIRECTS_OPTION, $redirects );
 
 		if ( $skipped > 0 ) {
-			$this->set_admin_notice(
-				sprintf(
+			return array(
+				'message' => sprintf(
 					/* translators: 1: Number of redirects saved. 2: Number of redirects skipped. */
 					__( '%1$d redirect(s) saved. %2$d invalid row(s) skipped.', 'nexisettings' ),
 					count( $redirects ),
 					$skipped
 				),
-				'warning'
-			);
-		} else {
-			$this->set_admin_notice(
-				sprintf(
-					/* translators: %d: Number of redirects saved. */
-					_n( '%d redirect saved.', '%d redirects saved.', count( $redirects ), 'nexisettings' ),
-					count( $redirects )
-				),
-				'success'
+				'type'    => 'warning',
 			);
 		}
 
-		wp_safe_redirect( add_query_arg( array( 'page' => self::MENU_SLUG, 'tab' => 'redirects' ), admin_url( 'admin.php' ) ) );
-		exit;
+		return array(
+			'message' => sprintf(
+				/* translators: %d: Number of redirects saved. */
+				_n( '%d redirect saved.', '%d redirects saved.', count( $redirects ), 'nexisettings' ),
+				count( $redirects )
+			),
+			'type'    => 'success',
+		);
 	}
 
 	/**
@@ -218,7 +329,7 @@ class NexiSettings_Admin {
 		<div class="wrap nexisettings-wrap">
 			<div class="nexisettings-hero">
 				<div>
-					<p class="nexisettings-eyebrow"><?php esc_html_e( 'Nexiby toolkit', 'nexisettings' ); ?></p>
+					<p class="nexisettings-eyebrow"><?php esc_html_e( 'DASHBOARD TOOLKIT', 'nexisettings' ); ?></p>
 					<h1><?php esc_html_e( 'NexiSettings', 'nexisettings' ); ?></h1>
 					<p><?php esc_html_e( 'Secure and customize WordPress login, redirects, performance, and admin branding from one clean dashboard.', 'nexisettings' ); ?></p>
 				</div>
@@ -233,8 +344,10 @@ class NexiSettings_Admin {
 				</div>
 			</div>
 
-			<?php settings_errors( NEXISETTINGS_OPTION ); ?>
-			<?php $this->display_admin_notice(); ?>
+			<div class="nexisettings-notices" aria-live="polite">
+				<?php settings_errors( NEXISETTINGS_OPTION ); ?>
+				<?php $this->display_admin_notice(); ?>
+			</div>
 
 			<nav class="nexisettings-tabs" aria-label="<?php esc_attr_e( 'NexiSettings sections', 'nexisettings' ); ?>">
 				<?php foreach ( $this->get_tabs() as $tab_id => $label ) : ?>
@@ -285,8 +398,14 @@ class NexiSettings_Admin {
 		$was_enabled = ! empty( $existing['enable_custom_login'] );
 		$old_slug    = isset( $existing['custom_login_slug'] ) ? $existing['custom_login_slug'] : '';
 
-		$output['enable_custom_login'] = empty( $input['enable_custom_login'] ) ? 0 : 1;
-		$output['login_block_action']  = isset( $input['login_block_action'] ) && in_array( $input['login_block_action'], array( '404', 'home', 'custom' ), true ) ? $input['login_block_action'] : '404';
+		$output['enable_custom_login']     = empty( $input['enable_custom_login'] ) ? 0 : 1;
+		$output['login_block_action']      = isset( $input['login_block_action'] ) && in_array( $input['login_block_action'], array( '404', 'home', 'custom_url' ), true ) ? $input['login_block_action'] : '404';
+		$output['login_block_custom_url']  = isset( $input['login_block_custom_url'] ) ? $this->sanitize_local_page_url( $input['login_block_custom_url'] ) : '';
+
+		if ( 'custom_url' === $output['login_block_action'] && '' === $output['login_block_custom_url'] ) {
+			$output['login_block_action'] = '404';
+			add_settings_error( NEXISETTINGS_OPTION, 'nexisettings-invalid-block-url', esc_html__( 'Enter a valid same-site custom page URL before selecting the custom page redirect option.', 'nexisettings' ), 'error' );
+		}
 
 		$raw_slug = isset( $input['custom_login_slug'] ) ? trim( sanitize_text_field( $input['custom_login_slug'] ) ) : '';
 		$raw_slug = trim( $raw_slug, '/' );
@@ -328,15 +447,23 @@ class NexiSettings_Admin {
 	 */
 	private function sanitize_login_branding_options( $input, $output ) {
 		if ( ! empty( $input['reset_login_branding'] ) ) {
-			$output['login_logo_id']   = 0;
-			$output['login_logo_url']  = '';
-			$output['login_logo_text'] = '';
+			$output['login_logo_id']          = 0;
+			$output['login_logo_url']         = '';
+			$output['login_logo_text']        = '';
+			$output['login_background_color'] = '';
+			$output['login_text_color']       = '';
+			$output['login_link_color']       = '';
+			$output['login_logo_text_size']   = 18;
 			return $output;
 		}
 
-		$output['login_logo_id']   = isset( $input['login_logo_id'] ) ? absint( $input['login_logo_id'] ) : 0;
-		$output['login_logo_url']  = isset( $input['login_logo_url'] ) ? esc_url_raw( $input['login_logo_url'] ) : '';
-		$output['login_logo_text'] = isset( $input['login_logo_text'] ) ? wp_kses_post( $input['login_logo_text'] ) : '';
+		$output['login_logo_id']          = isset( $input['login_logo_id'] ) ? absint( $input['login_logo_id'] ) : 0;
+		$output['login_logo_url']         = isset( $input['login_logo_url'] ) ? esc_url_raw( $input['login_logo_url'] ) : '';
+		$output['login_logo_text']        = isset( $input['login_logo_text'] ) ? wp_kses_post( $input['login_logo_text'] ) : '';
+		$output['login_background_color'] = isset( $input['login_background_color'] ) ? $this->sanitize_hex_color_field( $input['login_background_color'] ) : '';
+		$output['login_text_color']       = isset( $input['login_text_color'] ) ? $this->sanitize_hex_color_field( $input['login_text_color'] ) : '';
+		$output['login_link_color']       = isset( $input['login_link_color'] ) ? $this->sanitize_hex_color_field( $input['login_link_color'] ) : '';
+		$output['login_logo_text_size']   = isset( $input['login_logo_text_size'] ) ? $this->sanitize_login_text_size( $input['login_logo_text_size'] ) : 18;
 
 		return $output;
 	}
@@ -378,15 +505,238 @@ class NexiSettings_Admin {
 	}
 
 	/**
+	 * Sanitize a same-site page URL for wp-login.php block redirects.
+	 *
+	 * @param mixed $url Submitted URL.
+	 * @return string
+	 */
+	private function sanitize_local_page_url( $url ) {
+		if ( ! is_scalar( $url ) ) {
+			return '';
+		}
+
+		$url = trim( sanitize_text_field( wp_unslash( $url ) ) );
+
+		if ( '' === $url || 0 === strpos( $url, '//' ) ) {
+			return '';
+		}
+
+		if ( 0 === strpos( $url, '/' ) ) {
+			return esc_url_raw( $url );
+		}
+
+		$parts     = wp_parse_url( $url );
+		$home_host = wp_parse_url( home_url( '/' ), PHP_URL_HOST );
+
+		if ( ! is_array( $parts ) || empty( $parts['scheme'] ) || empty( $parts['host'] ) || empty( $home_host ) ) {
+			return '';
+		}
+
+		if ( ! in_array( strtolower( $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
+			return '';
+		}
+
+		if ( strtolower( $parts['host'] ) !== strtolower( $home_host ) ) {
+			return '';
+		}
+
+		return esc_url_raw( $url );
+	}
+
+	/**
+	 * Sanitize a hex color field.
+	 *
+	 * @param mixed $color Submitted color.
+	 * @return string
+	 */
+	private function sanitize_hex_color_field( $color ) {
+		if ( ! is_scalar( $color ) ) {
+			return '';
+		}
+
+		$color = sanitize_hex_color( wp_unslash( $color ) );
+
+		return is_string( $color ) ? $color : '';
+	}
+
+	/**
+	 * Sanitize custom login text size.
+	 *
+	 * @param mixed $size Submitted size.
+	 * @return int
+	 */
+	private function sanitize_login_text_size( $size ) {
+		$size = absint( $size );
+
+		if ( $size < 12 ) {
+			return 12;
+		}
+
+		if ( $size > 48 ) {
+			return 48;
+		}
+
+		return $size;
+	}
+
+	/**
+	 * Clear collected Settings API errors before an AJAX save.
+	 *
+	 * @return void
+	 */
+	private function clear_settings_errors() {
+		global $wp_settings_errors;
+
+		$wp_settings_errors = array();
+	}
+
+	/**
+	 * Determine whether Settings API messages contain errors.
+	 *
+	 * @param array $errors Settings API messages.
+	 * @return bool
+	 */
+	private function settings_errors_have_errors( $errors ) {
+		foreach ( $errors as $error ) {
+			if ( isset( $error['type'] ) && 'error' === $error['type'] ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Render Settings API messages as visible notices.
+	 *
+	 * @param array $errors Settings API messages.
+	 * @return string
+	 */
+	private function render_settings_errors_html( $errors ) {
+		$html = '';
+
+		foreach ( $errors as $error ) {
+			$type    = isset( $error['type'] ) ? sanitize_key( $error['type'] ) : 'info';
+			$message = isset( $error['message'] ) ? $error['message'] : '';
+
+			if ( '' === $message ) {
+				continue;
+			}
+
+			$html .= $this->render_notice_html( $message, $type );
+		}
+
+		return $html;
+	}
+
+	/**
+	 * Render a high-contrast admin notice.
+	 *
+	 * @param string $message Notice message.
+	 * @param string $type    Notice type.
+	 * @return string
+	 */
+	private function render_notice_html( $message, $type = 'success' ) {
+		if ( 'updated' === $type ) {
+			$type = 'success';
+		}
+
+		$type = in_array( $type, array( 'success', 'error', 'warning', 'info' ), true ) ? $type : 'info';
+
+		ob_start();
+		?>
+		<div class="notice notice-<?php echo esc_attr( $type ); ?> nexisettings-notice is-dismissible">
+			<p><?php echo wp_kses_post( $message ); ?></p>
+		</div>
+		<?php
+		return ob_get_clean();
+	}
+
+	/**
+	 * Get success message for a saved settings tab.
+	 *
+	 * @param string $tab     Active tab.
+	 * @param array  $options Saved options.
+	 * @return string
+	 */
+	private function get_success_message_for_tab( $tab, $options ) {
+		if ( 'login-security' === $tab && ! empty( $options['enable_custom_login'] ) && ! empty( $options['custom_login_slug'] ) ) {
+			return sprintf(
+				/* translators: %s: Current custom login URL. */
+				__( 'Login security saved. Current login URL: %s', 'nexisettings' ),
+				esc_url( $this->get_current_login_url( $options ) )
+			);
+		}
+
+		$messages = array(
+			'login-security' => __( 'Login security settings saved.', 'nexisettings' ),
+			'login-branding' => __( 'Login branding settings saved.', 'nexisettings' ),
+			'security'       => __( 'Security settings saved.', 'nexisettings' ),
+			'performance'    => __( 'Performance settings saved.', 'nexisettings' ),
+			'admin-branding' => __( 'Admin branding settings saved.', 'nexisettings' ),
+		);
+
+		return isset( $messages[ $tab ] ) ? $messages[ $tab ] : __( 'Settings saved.', 'nexisettings' );
+	}
+
+	/**
+	 * Get current login notice HTML.
+	 *
+	 * @param array $options Plugin options.
+	 * @return string
+	 */
+	private function get_current_login_notice_html( $options ) {
+		ob_start();
+
+		if ( NexiSettings::is_custom_login_disabled() ) :
+			?>
+			<div class="nexisettings-alert nexisettings-alert-warning">
+				<?php esc_html_e( 'Custom login protection is disabled because NEXISETTINGS_DISABLE_CUSTOM_LOGIN is defined as true.', 'nexisettings' ); ?>
+			</div>
+			<?php
+		elseif ( ! empty( $options['enable_custom_login'] ) && '' !== $options['custom_login_slug'] ) :
+			$current_login_url = $this->get_current_login_url( $options );
+			?>
+			<div class="nexisettings-alert nexisettings-alert-success">
+				<strong><?php esc_html_e( 'Current login URL:', 'nexisettings' ); ?></strong>
+				<a href="<?php echo esc_url( $current_login_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $current_login_url ); ?></a>
+				<span><?php esc_html_e( 'Bookmark this URL before logging out.', 'nexisettings' ); ?></span>
+			</div>
+			<?php
+		endif;
+
+		return ob_get_clean();
+	}
+
+	/**
+	 * Get login logo preview URL for AJAX responses.
+	 *
+	 * @param array $options Plugin options.
+	 * @return string
+	 */
+	private function get_logo_preview_url( $options ) {
+		if ( empty( $options['login_logo_id'] ) ) {
+			return '';
+		}
+
+		$image = wp_get_attachment_image_src( absint( $options['login_logo_id'] ), 'medium' );
+
+		if ( ! is_array( $image ) || empty( $image[0] ) ) {
+			return '';
+		}
+
+		return esc_url_raw( $image[0] );
+	}
+
+	/**
 	 * Render Login Security tab.
 	 *
 	 * @param array $options Plugin options.
 	 * @return void
 	 */
 	private function render_login_security_tab( $options ) {
-		$current_login_url = $this->get_current_login_url( $options );
 		?>
-		<form method="post" action="options.php" class="nexisettings-form">
+		<form method="post" action="options.php" class="nexisettings-form nexisettings-options-form">
 			<?php settings_fields( 'nexisettings_options_group' ); ?>
 			<input type="hidden" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[active_tab]" value="login-security" />
 
@@ -398,17 +748,9 @@ class NexiSettings_Admin {
 					</div>
 				</div>
 
-				<?php if ( NexiSettings::is_custom_login_disabled() ) : ?>
-					<div class="nexisettings-alert nexisettings-alert-warning">
-						<?php esc_html_e( 'Custom login protection is disabled because NEXISETTINGS_DISABLE_CUSTOM_LOGIN is defined as true.', 'nexisettings' ); ?>
-					</div>
-				<?php elseif ( ! empty( $options['enable_custom_login'] ) && '' !== $options['custom_login_slug'] ) : ?>
-					<div class="nexisettings-alert nexisettings-alert-success">
-						<strong><?php esc_html_e( 'Current login URL:', 'nexisettings' ); ?></strong>
-						<a href="<?php echo esc_url( $current_login_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $current_login_url ); ?></a>
-						<span><?php esc_html_e( 'Bookmark this URL before logging out.', 'nexisettings' ); ?></span>
-					</div>
-				<?php endif; ?>
+				<div class="nexisettings-current-login-wrap">
+					<?php echo wp_kses_post( $this->get_current_login_notice_html( $options ) ); ?>
+				</div>
 
 				<?php
 				$this->render_toggle(
@@ -434,9 +776,15 @@ class NexiSettings_Admin {
 					<select name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_block_action]">
 						<option value="404" <?php selected( $options['login_block_action'], '404' ); ?>><?php esc_html_e( 'Show 404', 'nexisettings' ); ?></option>
 						<option value="home" <?php selected( $options['login_block_action'], 'home' ); ?>><?php esc_html_e( 'Redirect to homepage', 'nexisettings' ); ?></option>
-						<option value="custom" <?php selected( $options['login_block_action'], 'custom' ); ?>><?php esc_html_e( 'Redirect to custom login URL', 'nexisettings' ); ?></option>
+						<option value="custom_url" <?php selected( $options['login_block_action'], 'custom_url' ); ?>><?php esc_html_e( 'Redirect to custom page URL', 'nexisettings' ); ?></option>
 					</select>
 					<small><?php esc_html_e( 'Logged-in users are never blocked from wp-login.php.', 'nexisettings' ); ?></small>
+				</label>
+
+				<label class="nexisettings-field nexisettings-custom-block-url-field <?php echo esc_attr( 'custom_url' === $options['login_block_action'] ? '' : 'is-hidden' ); ?>">
+					<span><?php esc_html_e( 'Custom page URL', 'nexisettings' ); ?></span>
+					<input type="text" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_block_custom_url]" value="<?php echo esc_attr( $options['login_block_custom_url'] ); ?>" placeholder="<?php echo esc_attr( home_url( '/login-help/' ) ); ?>" />
+					<small><?php esc_html_e( 'Use a same-site page URL such as /login-help/ or a full URL on this domain.', 'nexisettings' ); ?></small>
 				</label>
 			</div>
 
@@ -460,7 +808,7 @@ class NexiSettings_Admin {
 			}
 		}
 		?>
-		<form method="post" action="options.php" class="nexisettings-form">
+		<form method="post" action="options.php" class="nexisettings-form nexisettings-options-form">
 			<?php settings_fields( 'nexisettings_options_group' ); ?>
 			<input type="hidden" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[active_tab]" value="login-branding" />
 
@@ -498,6 +846,32 @@ class NexiSettings_Admin {
 					<textarea name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_logo_text]" rows="4"><?php echo esc_textarea( $options['login_logo_text'] ); ?></textarea>
 					<small><?php esc_html_e( 'Basic formatting is allowed. Unsafe HTML is removed when saved.', 'nexisettings' ); ?></small>
 				</label>
+
+				<div class="nexisettings-branding-grid">
+					<label class="nexisettings-field">
+						<span><?php esc_html_e( 'Login background color', 'nexisettings' ); ?></span>
+						<input type="color" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_background_color]" value="<?php echo esc_attr( ! empty( $options['login_background_color'] ) ? $options['login_background_color'] : '#f0f0f1' ); ?>" />
+						<small><?php esc_html_e( 'Changes the login page background while keeping the form box white.', 'nexisettings' ); ?></small>
+					</label>
+
+					<label class="nexisettings-field">
+						<span><?php esc_html_e( 'Outside text color', 'nexisettings' ); ?></span>
+						<input type="color" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_text_color]" value="<?php echo esc_attr( ! empty( $options['login_text_color'] ) ? $options['login_text_color'] : '#3c434a' ); ?>" />
+						<small><?php esc_html_e( 'Applies to text outside the login form, including your custom message.', 'nexisettings' ); ?></small>
+					</label>
+
+					<label class="nexisettings-field">
+						<span><?php esc_html_e( 'Outside link color', 'nexisettings' ); ?></span>
+						<input type="color" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_link_color]" value="<?php echo esc_attr( ! empty( $options['login_link_color'] ) ? $options['login_link_color'] : '#2271b1' ); ?>" />
+						<small><?php esc_html_e( 'Applies to links outside the login form.', 'nexisettings' ); ?></small>
+					</label>
+
+					<label class="nexisettings-field">
+						<span><?php esc_html_e( 'Text below logo size', 'nexisettings' ); ?></span>
+						<input type="number" min="12" max="48" step="1" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_logo_text_size]" value="<?php echo esc_attr( absint( $options['login_logo_text_size'] ) ); ?>" />
+						<small><?php esc_html_e( 'Controls the custom message size in pixels. The message is centered automatically.', 'nexisettings' ); ?></small>
+					</label>
+				</div>
 			</div>
 
 			<?php submit_button( esc_html__( 'Save Login Branding', 'nexisettings' ), 'primary', 'submit', false ); ?>
@@ -590,7 +964,7 @@ class NexiSettings_Admin {
 	 */
 	private function render_security_tab( $options ) {
 		?>
-		<form method="post" action="options.php" class="nexisettings-form">
+		<form method="post" action="options.php" class="nexisettings-form nexisettings-options-form">
 			<?php settings_fields( 'nexisettings_options_group' ); ?>
 			<input type="hidden" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[active_tab]" value="security" />
 			<div class="nexisettings-card">
@@ -619,7 +993,7 @@ class NexiSettings_Admin {
 	 */
 	private function render_performance_tab( $options ) {
 		?>
-		<form method="post" action="options.php" class="nexisettings-form">
+		<form method="post" action="options.php" class="nexisettings-form nexisettings-options-form">
 			<?php settings_fields( 'nexisettings_options_group' ); ?>
 			<input type="hidden" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[active_tab]" value="performance" />
 			<div class="nexisettings-card">
@@ -647,7 +1021,7 @@ class NexiSettings_Admin {
 	 */
 	private function render_admin_branding_tab( $options ) {
 		?>
-		<form method="post" action="options.php" class="nexisettings-form">
+		<form method="post" action="options.php" class="nexisettings-form nexisettings-options-form">
 			<?php settings_fields( 'nexisettings_options_group' ); ?>
 			<input type="hidden" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[active_tab]" value="admin-branding" />
 			<div class="nexisettings-card">
