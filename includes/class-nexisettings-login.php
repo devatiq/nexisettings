@@ -96,8 +96,8 @@ class NexiSettings_Login {
 			return;
 		}
 
-		$script_name = isset( $_SERVER['SCRIPT_NAME'] ) ? wp_unslash( $_SERVER['SCRIPT_NAME'] ) : '';
-		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		$script_name = isset( $_SERVER['SCRIPT_NAME'] ) ? sanitize_text_field( wp_unslash( $_SERVER['SCRIPT_NAME'] ) ) : '';
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
 
 		if ( false === strpos( $script_name, 'wp-login.php' ) && false === strpos( $request_uri, 'wp-login.php' ) ) {
 			return;
@@ -387,7 +387,7 @@ class NexiSettings_Login {
 	 * @return string
 	 */
 	private function get_request_path() {
-		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '';
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '';
 		$path        = wp_parse_url( $request_uri, PHP_URL_PATH );
 
 		if ( empty( $path ) ) {

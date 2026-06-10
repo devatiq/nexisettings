@@ -174,7 +174,7 @@ class NexiSettings_Redirects {
 	 * @return array
 	 */
 	private function get_current_request_parts() {
-		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '/';
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) ) : '/';
 		$host        = isset( $_SERVER['HTTP_HOST'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) : wp_parse_url( home_url(), PHP_URL_HOST );
 		$scheme      = is_ssl() ? 'https' : 'http';
 		$full        = $scheme . '://' . $host . $request_uri;

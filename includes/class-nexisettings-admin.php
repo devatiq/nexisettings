@@ -45,7 +45,7 @@ class NexiSettings_Admin {
 			'manage_options',
 			self::MENU_SLUG,
 			array( $this, 'render_page' ),
-			'dashicons-shield-alt',
+			'dashicons-shield',
 			58
 		);
 	}
@@ -180,7 +180,7 @@ class NexiSettings_Admin {
 
 		check_ajax_referer( 'nexisettings_ajax_save', 'nonce' );
 
-		$input = isset( $_POST[ NEXISETTINGS_OPTION ] ) && is_array( $_POST[ NEXISETTINGS_OPTION ] ) ? $_POST[ NEXISETTINGS_OPTION ] : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$input = isset( $_POST[ NEXISETTINGS_OPTION ] ) && is_array( $_POST[ NEXISETTINGS_OPTION ] ) ? wp_unslash( $_POST[ NEXISETTINGS_OPTION ] ) : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$tab   = isset( $input['active_tab'] ) ? sanitize_key( wp_unslash( $input['active_tab'] ) ) : '';
 
 		if ( '' === $tab ) {
@@ -282,7 +282,7 @@ class NexiSettings_Admin {
 	 * @return array
 	 */
 	private function process_redirect_save() {
-		$rows      = isset( $_POST['nexisettings_redirects'] ) && is_array( $_POST['nexisettings_redirects'] ) ? wp_unslash( $_POST['nexisettings_redirects'] ) : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$rows      = isset( $_POST['nexisettings_redirects'] ) && is_array( $_POST['nexisettings_redirects'] ) ? wp_unslash( $_POST['nexisettings_redirects'] ) : array(); // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$redirects = NexiSettings_Redirects::sanitize_redirect_rows( $rows );
 		$submitted = $this->count_submitted_redirect_rows( $rows );
 		$skipped   = max( 0, $submitted - count( $redirects ) );

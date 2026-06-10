@@ -67,21 +67,11 @@ final class NexiSettings {
 	public function run() {
 		$this->load_dependencies();
 
-		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 		add_action( 'init', array( $this, 'bootstrap_features' ), 0 );
 
 		if ( is_admin() ) {
 			new NexiSettings_Admin();
 		}
-	}
-
-	/**
-	 * Load translations.
-	 *
-	 * @return void
-	 */
-	public function load_textdomain() {
-		load_plugin_textdomain( 'nexisettings', false, dirname( NEXISETTINGS_BASENAME ) . '/languages' );
 	}
 
 	/**

@@ -139,7 +139,7 @@ class NexiSettings_Security {
 		$route = isset( $GLOBALS['wp']->query_vars['rest_route'] ) ? $GLOBALS['wp']->query_vars['rest_route'] : '';
 
 		if ( empty( $route ) && isset( $_SERVER['REQUEST_URI'] ) ) {
-			$request_uri = wp_unslash( $_SERVER['REQUEST_URI'] );
+			$request_uri = sanitize_text_field( wp_unslash( $_SERVER['REQUEST_URI'] ) );
 			$path        = wp_parse_url( $request_uri, PHP_URL_PATH );
 			$rest_prefix = trailingslashit( rest_get_url_prefix() );
 
