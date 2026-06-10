@@ -723,7 +723,7 @@ class NexiSettings_Admin {
 
 				<label class="nexisettings-field nexisettings-custom-block-url-field <?php echo esc_attr( 'custom_url' === $options['login_block_action'] ? '' : 'is-hidden' ); ?>">
 					<span><?php esc_html_e( 'Custom page URL', 'nexisettings' ); ?></span>
-					<input type="url" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_block_custom_url]" value="<?php echo esc_attr( $options['login_block_custom_url'] ); ?>" placeholder="<?php echo esc_attr( home_url( '/login-help/' ) ); ?>" />
+					<input type="text" name="<?php echo esc_attr( NEXISETTINGS_OPTION ); ?>[login_block_custom_url]" value="<?php echo esc_attr( $options['login_block_custom_url'] ); ?>" placeholder="<?php echo esc_attr( home_url( '/login-help/' ) ); ?>" />
 					<small><?php esc_html_e( 'Use a same-site page URL such as /login-help/ or a full URL on this domain.', 'nexisettings' ); ?></small>
 				</label>
 			</div>
