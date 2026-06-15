@@ -66,7 +66,7 @@ class NexiSettings_Redirects {
 			}
 
 			$this->did_redirect = true;
-			wp_redirect( $destination, $status ); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
+			wp_safe_redirect( $destination, $status ); // phpcs:ignore WordPress.Security.SafeRedirect.wp_redirect_wp_redirect
 			exit;
 		}
 	}

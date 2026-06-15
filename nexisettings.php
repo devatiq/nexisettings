@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: NexiSettings – Login, Redirect & Admin Toolkit
- * Plugin URI: https://nexiby.com/
+ * Plugin URI: https://github.com/devatiq/nexisettings
  * Description: Secure and customize WordPress with custom login URLs, redirect management, security enhancements, performance tweaks, and admin branding tools.
  * Version: 1.0.0
  * Author: Nexiby LLC
